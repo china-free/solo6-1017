@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Card, Typography } from 'antd';
+import { Card, Typography, Tooltip } from 'antd';
 import { AtcStoreType } from '../store/useAtcStore';
 import { recatCategoryColors, recatCategoryNames } from '../types';
 import { formatTime } from '../services/api';
@@ -11,10 +11,11 @@ interface GanttChartProps {
 }
 
 const GanttChart = ({ store }: GanttChartProps) => {
-  const { schedulingResult, selectedFlight, setSelectedFlight } = store;
+  const { schedulingResult, selectedFlight, setSelectedFlight, playbackState } = store;
+  const { startTime, currentTime } = playbackState;
 
   const chartData = useMemo(() => {
-    if (!schedulingResult) return [];
+    if (!schedulingResult) return null;
 
     const runwayMap = new Map<string, number>();
     schedulingResult.runwayOccupancies.forEach(occ => {
@@ -35,7 +36,7 @@ const GanttChart = ({ store }: GanttChartProps) => {
       maxTime = Math.max(maxTime, end);
     });
 
-    if (minTime === Infinity) return [];
+    if (minTime === Infinity) return null;
 
     const timePadding = (maxTime - minTime) * 0.1;
     minTime -= timePadding;
@@ -54,7 +55,30 @@ const GanttChart = ({ store }: GanttChartProps) => {
     };
   }, [schedulingResult]);
 
-  if (!schedulingResult || schedulingResult.runwayOccupancies.length === 0) {
+  const currentMs = useMemo(() => {
+    if (!startTime) return null;
+    return new Date(startTime).getTime() + currentTime * 1000;
+  }, [startTime, currentTime]);
+
+  const timeLinePosition = useMemo(() => {
+    if (!chartData || currentMs === null) return null;
+    const { minTime, maxTime } = chartData;
+    const totalDuration = maxTime - minTime;
+    return ((currentMs - minTime) / totalDuration) * 100;
+  }, [chartData, currentMs]);
+
+  const activeOccupancies = useMemo(() => {
+    if (!chartData || currentMs === null) return new Set<string>();
+    const active = new Set<string>();
+    chartData.occupancies.forEach(occ => {
+      if (currentMs >= occ.startMs && currentMs <= occ.endMs) {
+        active.add(occ.id);
+      }
+    });
+    return active;
+  }, [chartData, currentMs]);
+
+  if (!schedulingResult || schedulingResult.runwayOccupancies.length === 0 || !chartData) {
     return null;
   }
 
@@ -81,7 +105,27 @@ const GanttChart = ({ store }: GanttChartProps) => {
   return (
     <div className="gantt-panel">
       <Card
-        title="跑道占用时间表"
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span>跑道占用时间表</span>
+            {currentMs !== null && (
+              <Tooltip title="当前回放时间">
+                <Text type="secondary" style={{ fontSize: 12, marginLeft: 12 }}>
+                  <span style={{ 
+                    display: 'inline-block', 
+                    width: 8, 
+                    height: 8, 
+                    borderRadius: '50%', 
+                    background: '#ff4d4f',
+                    marginRight: 6,
+                    animation: 'pulse 1.5s infinite'
+                  }} />
+                  {formatTime(new Date(currentMs).toISOString())}
+                </Text>
+              </Tooltip>
+            )}
+          </div>
+        }
         size="small"
         bodyStyle={{ padding: '12px 16px', height: 240 }}
       >
@@ -91,6 +135,20 @@ const GanttChart = ({ store }: GanttChartProps) => {
             height={chartHeight}
             style={{ position: 'absolute', top: 0, left: 0 }}
           >
+            <defs>
+              <filter id="glow">
+                <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                <feMerge>
+                  <feMergeNode in="coloredBlur"/>
+                  <feMergeNode in="SourceGraphic"/>
+                </feMerge>
+              </filter>
+              <linearGradient id="timelineGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor="#ff4d4f" stopOpacity="0.8"/>
+                <stop offset="100%" stopColor="#ff4d4f" stopOpacity="0.3"/>
+              </linearGradient>
+            </defs>
+
             {runwayNames.map((name, index) => (
               <g key={name}>
                 <rect
@@ -150,6 +208,7 @@ const GanttChart = ({ store }: GanttChartProps) => {
               const category = scheduledFlight?.flightPlan.aircraftCategory || 'C';
               const color = recatCategoryColors[category];
               const isSelected = selectedFlight?.flightPlan.flightId === occ.flightId;
+              const isActive = activeOccupancies.has(occ.id);
 
               const x = ((occ.startMs - minTime) / totalDuration) * 100;
               const width = ((occ.endMs - occ.startMs) / totalDuration) * 100;
@@ -165,6 +224,26 @@ const GanttChart = ({ store }: GanttChartProps) => {
                     }
                   }}
                 >
+                  {isActive && (
+                    <rect
+                      x={`${x}%`}
+                      y={y - 3}
+                      width={`${Math.max(width, 2)}%`}
+                      height={36}
+                      rx={6}
+                      ry={6}
+                      fill="none"
+                      stroke="#ff4d4f"
+                      strokeWidth={3}
+                      strokeDasharray="6,3"
+                      style={{
+                        pointerEvents: 'none',
+                        filter: 'url(#glow)',
+                        animation: 'dash 1.5s linear infinite'
+                      }}
+                    />
+                  )}
+                  
                   <rect
                     x={`${x}%`}
                     y={y}
@@ -173,55 +252,87 @@ const GanttChart = ({ store }: GanttChartProps) => {
                     rx={4}
                     ry={4}
                     fill={color}
-                    opacity={isSelected ? 1 : 0.85}
-                    stroke={isSelected ? '#fff' : 'transparent'}
-                    strokeWidth={isSelected ? 2 : 0}
+                    opacity={isActive ? 1 : (isSelected ? 0.9 : 0.75)}
+                    stroke={isActive ? '#fff' : (isSelected ? '#fff' : 'transparent')}
+                    strokeWidth={isActive ? 2 : (isSelected ? 2 : 0)}
                     style={{
                       cursor: 'pointer',
-                      filter: isSelected ? 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))' : 'none'
+                      filter: isActive 
+                        ? 'drop-shadow(0 4px 8px rgba(255,77,79,0.4))' 
+                        : (isSelected ? 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))' : 'none'),
+                      transition: 'all 0.2s ease'
                     }}
                   />
+                  
                   <text
                     x={`${x + width / 2}%`}
                     y={y + 20}
-                    fontSize={11}
+                    fontSize={isActive ? 12 : 11}
                     fill="#fff"
-                    fontWeight="500"
+                    fontWeight={isActive ? '700' : '500'}
                     textAnchor="middle"
                     pointerEvents="none"
+                    style={{ transition: 'all 0.2s ease' }}
                   >
                     {occ.flightId}
                   </text>
-                  <text
-                    x={`${x + width / 2}%`}
-                    y={y + 28}
-                    fontSize={9}
-                    fill="rgba(255,255,255,0.9)"
-                    textAnchor="middle"
-                    pointerEvents="none"
-                  >
-                    {formatTime(occ.startTime)}
-                  </text>
+                  
+                  {width > 8 && (
+                    <text
+                      x={`${x + width / 2}%`}
+                      y={y + 28}
+                      fontSize={9}
+                      fill="rgba(255,255,255,0.9)"
+                      textAnchor="middle"
+                      pointerEvents="none"
+                    >
+                      {formatTime(occ.startTime)}
+                    </text>
+                  )}
                 </g>
               );
             })}
 
-            {store.playbackState.startTime && (() => {
-              const currentMs = new Date(store.playbackState.startTime).getTime() + 
-                store.playbackState.currentTime * 1000;
-              const position = ((currentMs - minTime) / totalDuration) * 100;
-              return (
-                <line
-                  x1={`${position}%`}
-                  y1={25}
-                  x2={`${position}%`}
-                  y2={chartHeight}
-                  stroke="#ff4d4f"
-                  strokeWidth={2}
-                  style={{ pointerEvents: 'none' }}
+            {timeLinePosition !== null && (
+              <g style={{ pointerEvents: 'none' }}>
+                <polygon
+                  points={`${timeLinePosition}%,15 ${timeLinePosition - 6},5 ${timeLinePosition + 6},5`}
+                  fill="#ff4d4f"
+                  filter="url(#glow)"
                 />
-              );
-            })()}
+                
+                <line
+                  x1={`${timeLinePosition}%`}
+                  y1={15}
+                  x2={`${timeLinePosition}%`}
+                  y2={chartHeight}
+                  stroke="url(#timelineGradient)"
+                  strokeWidth={3}
+                />
+                
+                <rect
+                  x={`calc(${timeLinePosition}% - 35px)`}
+                  y={0}
+                  width={70}
+                  height={20}
+                  rx={4}
+                  ry={4}
+                  fill="#ff4d4f"
+                  fillOpacity={0.95}
+                />
+                
+                <text
+                  x={`${timeLinePosition}%`}
+                  y={14}
+                  fontSize={10}
+                  fill="#fff"
+                  fontWeight="600"
+                  textAnchor="middle"
+                >
+                  {formatTime(new Date(currentMs!).toISOString())}
+                </text>
+              </g>
+            )}
           </svg>
         </div>
 
@@ -233,6 +344,20 @@ const GanttChart = ({ store }: GanttChartProps) => {
           borderTop: '1px solid #f0f0f0',
           flexWrap: 'wrap'
         }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <div
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: 2,
+                border: '2px dashed #ff4d4f',
+                background: 'transparent'
+              }}
+            />
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              当前占用
+            </Text>
+          </div>
           {Object.entries(recatCategoryColors).map(([cat, color]) => (
             <div key={cat} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <div
@@ -250,6 +375,16 @@ const GanttChart = ({ store }: GanttChartProps) => {
           ))}
         </div>
       </Card>
+
+      <style>{`
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
+        }
+        @keyframes dash {
+          to { stroke-dashoffset: -18; }
+        }
+      `}</style>
     </div>
   );
 };
