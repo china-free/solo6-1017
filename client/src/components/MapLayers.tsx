@@ -7,43 +7,31 @@ import {
   PathLayer
 } from '@deck.gl/layers';
 import { ColumnLayer } from '@deck.gl/layers';
-import { AirportConfig, ScheduledFlight, recatCategoryColors, getWakeIntensityColor, getAltitudeColor } from '../types';
+import { recatCategoryColors, getWakeIntensityColor, getAltitudeColor } from '../types';
 import { generateSyntheticTerrain } from '../utils/terrainGenerator';
+import { AtcStoreType } from '../store/useAtcStore';
 
 interface MapLayersProps {
-  airportConfig: AirportConfig;
-  activeFlights: ScheduledFlight[];
-  activeWakeZones: Array<{
-    id: string;
-    flightId: string;
-    center: [number, number, number];
-    radius: number;
-    intensity: number;
-    height: number;
-  }>;
-  currentTime: number;
-  startTime: string;
-  showWakeZones: boolean;
-  showTrajectories: boolean;
-  selectedFlight: ScheduledFlight | null;
-  editorMode: 'none' | 'runway' | 'route';
+  store: AtcStoreType;
   editorUpdateTrigger?: number;
   onMapClick?: (coord: { lat: number; lng: number }) => void;
 }
 
 const MapLayers = (props: MapLayersProps): Layer[] => {
+  const { store, editorUpdateTrigger = 0 } = props;
   const {
     airportConfig,
     activeFlights,
+    flightRenderData,
     activeWakeZones,
-    currentTime,
-    startTime,
     showWakeZones,
     showTrajectories,
     selectedFlight,
     editorMode,
-    editorUpdateTrigger = 0
-  } = props;
+    getTrajectoryProgress
+  } = store;
+
+  if (!airportConfig) return [];
 
   const layers: Layer[] = [];
 
@@ -249,7 +237,8 @@ const MapLayers = (props: MapLayersProps): Layer[] => {
   );
 
   if (showTrajectories) {
-    const trajectoryData = activeFlights.map(flight => {
+    const trajectoryData = flightRenderData.map(renderData => {
+      const { flight, visiblePointCount } = renderData;
       const category = flight.flightPlan.aircraftCategory;
       const colorHex = recatCategoryColors[category];
       const color = [
@@ -259,12 +248,9 @@ const MapLayers = (props: MapLayersProps): Layer[] => {
         200
       ];
 
-      const trajectoryProgress = getTrajectoryProgress(flight, currentTime, startTime);
-      const visiblePoints = Math.floor(flight.trajectory.length * trajectoryProgress);
-
       return {
         id: flight.flightPlan.flightId,
-        path: flight.trajectory.slice(0, visiblePoints).map(p => [p.lng, p.lat, p.alt || 0]),
+        path: flight.trajectory.slice(0, visiblePointCount).map(p => [p.lng, p.lat, p.alt || 0]),
         color,
         data: flight,
         isSelected: selectedFlight?.flightPlan.flightId === flight.flightPlan.flightId
@@ -281,13 +267,14 @@ const MapLayers = (props: MapLayersProps): Layer[] => {
         widthMinPixels: 2,
         opacity: 0.8,
         updateTriggers: {
-          getPath: [currentTime, startTime, activeFlights]
+          getPath: [flightRenderData]
         }
       })
     );
   }
 
-  const flightPositions = activeFlights.map(flight => {
+  const flightPositions = flightRenderData.map(renderData => {
+    const { flight, position } = renderData;
     const category = flight.flightPlan.aircraftCategory;
     const colorHex = recatCategoryColors[category];
     const color = [
@@ -296,8 +283,6 @@ const MapLayers = (props: MapLayersProps): Layer[] => {
       parseInt(colorHex.slice(5, 7), 16),
       255
     ];
-
-    const position = getFlightPosition(flight, currentTime, startTime);
 
     return {
       id: flight.flightPlan.flightId,
@@ -327,7 +312,7 @@ const MapLayers = (props: MapLayersProps): Layer[] => {
         }
       },
       updateTriggers: {
-        getPosition: [currentTime, startTime, activeFlights]
+        getPosition: [flightRenderData]
       }
     })
   );
@@ -353,7 +338,7 @@ const MapLayers = (props: MapLayersProps): Layer[] => {
       getBackgroundColor: (d: any) => [...d.color.slice(0, 3), 200],
       getPadding: [4, 6],
       updateTriggers: {
-        getPosition: [currentTime, startTime, activeFlights]
+        getPosition: [flightRenderData]
       }
     })
   );
@@ -374,8 +359,8 @@ const MapLayers = (props: MapLayersProps): Layer[] => {
         getElevation: (d: any) => d.height,
         opacity: 0.5,
         updateTriggers: {
-          getPosition: [currentTime, startTime],
-          getFillColor: [currentTime, startTime]
+          getPosition: [activeWakeZones],
+          getFillColor: [activeWakeZones]
         }
       })
     );
@@ -493,42 +478,5 @@ const MapLayers = (props: MapLayersProps): Layer[] => {
 
   return layers;
 };
-
-function getTrajectoryProgress(
-  flight: ScheduledFlight,
-  currentTime: number,
-  startTime: string
-): number {
-  if (!startTime) return 0;
-
-  const startMs = new Date(startTime).getTime();
-  const currentMs = startMs + currentTime * 1000;
-  const landingMs = new Date(flight.scheduledLandingTime).getTime();
-
-  const approachStart = landingMs - 120000;
-  const approachEnd = landingMs + 60000;
-
-  if (currentMs < approachStart) return 0;
-  if (currentMs > approachEnd) return 1;
-
-  return (currentMs - approachStart) / (approachEnd - approachStart);
-}
-
-function getFlightPosition(
-  flight: ScheduledFlight,
-  currentTime: number,
-  startTime: string
-): [number, number, number] {
-  const progress = getTrajectoryProgress(flight, currentTime, startTime);
-  const index = Math.floor(progress * (flight.trajectory.length - 1));
-  const point = flight.trajectory[Math.min(index, flight.trajectory.length - 1)];
-
-  if (!point) {
-    const firstPoint = flight.trajectory[0];
-    return [firstPoint.lng, firstPoint.lat, firstPoint.alt || 0];
-  }
-
-  return [point.lng, point.lat, (point.alt || 0) + 200];
-}
 
 export default MapLayers;

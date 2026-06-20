@@ -17,6 +17,12 @@ import {
   getFlightPlans,
   clearFlightPlans
 } from '../services/api';
+import usePlaybackEngine, {
+  PlaybackEngineResult,
+  FlightRenderData,
+  WakeZoneRenderData,
+  GanttTimeInfo
+} from '../hooks/usePlaybackEngine';
 
 export const useAtcStore = () => {
   const [airportConfig, setAirportConfig] = useState<AirportConfig | null>(null);
@@ -205,59 +211,17 @@ export const useAtcStore = () => {
     setWeather(prev => prev ? { ...prev, ...newWeather } : prev);
   }, []);
 
-  const getFlightsAtTime = useCallback((currentTime: number): ScheduledFlight[] => {
-    if (!schedulingResult) return [];
-
-    const timeMs = new Date(playbackState.startTime).getTime() + currentTime * 1000;
-
-    return schedulingResult.scheduledFlights.filter(flight => {
-      const landingTime = new Date(flight.scheduledLandingTime).getTime();
-      const approachStart = landingTime - 120000;
-      const approachEnd = landingTime + 60000;
-      return timeMs >= approachStart && timeMs <= approachEnd;
-    });
-  }, [schedulingResult, playbackState.startTime]);
-
-  const getActiveWakeZonesAtTime = useCallback((currentTime: number) => {
-    if (!schedulingResult) return [];
-
-    const timeMs = new Date(playbackState.startTime).getTime() + currentTime * 1000;
-    const currentDate = new Date(timeMs);
-
-    const zones: {
-      id: string;
-      flightId: string;
-      center: [number, number, number];
-      radius: number;
-      intensity: number;
-      height: number;
-    }[] = [];
-
-    for (const flight of schedulingResult.scheduledFlights) {
-      for (const zone of flight.wakeZones) {
-        const createdAt = new Date(zone.createdAt).getTime();
-        const dissipatedAt = zone.dissipatedAt ? new Date(zone.dissipatedAt).getTime() : createdAt + 120000;
-
-        if (timeMs >= createdAt && timeMs <= dissipatedAt) {
-          const elapsed = (timeMs - createdAt) / (dissipatedAt - createdAt);
-          const intensity = zone.intensity * (1 - elapsed);
-
-          if (intensity > 0.05) {
-            zones.push({
-              id: zone.id,
-              flightId: zone.flightId,
-              center: [zone.center.lng, zone.center.lat, zone.center.alt || 1000],
-              radius: zone.radius,
-              intensity,
-              height: zone.height
-            });
-          }
-        }
-      }
-    }
-
-    return zones;
-  }, [schedulingResult, playbackState.startTime]);
+  const playbackEngine = usePlaybackEngine(playbackState, schedulingResult);
+  const {
+    currentMs,
+    totalDurationSeconds,
+    activeFlights,
+    flightRenderData,
+    activeWakeZones,
+    ganttTimeInfo,
+    getTrajectoryProgress,
+    getFlightPosition
+  } = playbackEngine;
 
   return {
     airportConfig,
@@ -290,8 +254,14 @@ export const useAtcStore = () => {
     addRoute,
     deleteRoute,
     updateWeatherCondition,
-    getFlightsAtTime,
-    getActiveWakeZonesAtTime
+    currentMs,
+    totalDurationSeconds,
+    activeFlights,
+    flightRenderData,
+    activeWakeZones,
+    ganttTimeInfo,
+    getTrajectoryProgress,
+    getFlightPosition
   };
 };
 

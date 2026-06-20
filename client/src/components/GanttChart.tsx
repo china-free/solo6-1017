@@ -11,78 +11,21 @@ interface GanttChartProps {
 }
 
 const GanttChart = ({ store }: GanttChartProps) => {
-  const { schedulingResult, selectedFlight, setSelectedFlight, playbackState } = store;
-  const { startTime, currentTime } = playbackState;
+  const { schedulingResult, selectedFlight, setSelectedFlight, ganttTimeInfo, currentMs } = store;
 
-  const chartData = useMemo(() => {
-    if (!schedulingResult) return null;
-
-    const runwayMap = new Map<string, number>();
-    schedulingResult.runwayOccupancies.forEach(occ => {
-      if (!runwayMap.has(occ.runwayId)) {
-        runwayMap.set(occ.runwayId, runwayMap.size);
-      }
-    });
-
-    const runways = Array.from(runwayMap.keys());
-
-    let minTime = Infinity;
-    let maxTime = -Infinity;
-
-    schedulingResult.runwayOccupancies.forEach(occ => {
-      const start = new Date(occ.startTime).getTime();
-      const end = new Date(occ.endTime).getTime();
-      minTime = Math.min(minTime, start);
-      maxTime = Math.max(maxTime, end);
-    });
-
-    if (minTime === Infinity) return null;
-
-    const timePadding = (maxTime - minTime) * 0.1;
-    minTime -= timePadding;
-    maxTime += timePadding;
-
-    return {
-      runways,
-      minTime,
-      maxTime,
-      occupancies: schedulingResult.runwayOccupancies.map(occ => ({
-        ...occ,
-        runwayIndex: runwayMap.get(occ.runwayId)!,
-        startMs: new Date(occ.startTime).getTime(),
-        endMs: new Date(occ.endTime).getTime()
-      }))
-    };
-  }, [schedulingResult]);
-
-  const currentMs = useMemo(() => {
-    if (!startTime) return null;
-    return new Date(startTime).getTime() + currentTime * 1000;
-  }, [startTime, currentTime]);
-
-  const timeLinePosition = useMemo(() => {
-    if (!chartData || currentMs === null) return null;
-    const { minTime, maxTime } = chartData;
-    const totalDuration = maxTime - minTime;
-    return ((currentMs - minTime) / totalDuration) * 100;
-  }, [chartData, currentMs]);
-
-  const activeOccupancies = useMemo(() => {
-    if (!chartData || currentMs === null) return new Set<string>();
-    const active = new Set<string>();
-    chartData.occupancies.forEach(occ => {
-      if (currentMs >= occ.startMs && currentMs <= occ.endMs) {
-        active.add(occ.id);
-      }
-    });
-    return active;
-  }, [chartData, currentMs]);
-
-  if (!schedulingResult || schedulingResult.runwayOccupancies.length === 0 || !chartData) {
+  if (!schedulingResult || schedulingResult.runwayOccupancies.length === 0 || !ganttTimeInfo) {
     return null;
   }
 
-  const { runways, minTime, maxTime, occupancies } = chartData;
+  const {
+    runways,
+    minTime,
+    maxTime,
+    occupancies,
+    positionPercent: timeLinePosition,
+    activeOccupancyIds: activeOccupancies
+  } = ganttTimeInfo;
+
   const chartHeight = 40 + runways.length * 40;
   const totalDuration = maxTime - minTime;
 
@@ -108,7 +51,7 @@ const GanttChart = ({ store }: GanttChartProps) => {
         title={
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span>跑道占用时间表</span>
-            {currentMs !== null && (
+            {ganttTimeInfo && (
               <Tooltip title="当前回放时间">
                 <Text type="secondary" style={{ fontSize: 12, marginLeft: 12 }}>
                   <span style={{ 
@@ -120,7 +63,7 @@ const GanttChart = ({ store }: GanttChartProps) => {
                     marginRight: 6,
                     animation: 'pulse 1.5s infinite'
                   }} />
-                  {formatTime(new Date(currentMs).toISOString())}
+                  {formatTime(new Date(ganttTimeInfo.currentMs).toISOString())}
                 </Text>
               </Tooltip>
             )}
@@ -329,7 +272,7 @@ const GanttChart = ({ store }: GanttChartProps) => {
                   fontWeight="600"
                   textAnchor="middle"
                 >
-                  {formatTime(new Date(currentMs!).toISOString())}
+                  {formatTime(new Date(ganttTimeInfo!.currentMs).toISOString())}
                 </text>
               </g>
             )}

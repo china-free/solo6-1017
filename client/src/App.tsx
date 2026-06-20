@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Layout, message } from 'antd';
 import DeckGL from '@deck.gl/react';
 import { MapViewState, PickingInfo } from '@deck.gl/core';
@@ -26,17 +26,24 @@ function App() {
     viewState,
     playbackState,
     editorMode,
+    totalDurationSeconds,
+    activeFlights,
+    activeWakeZones,
     loadInitialData,
     setViewState,
     setSelectedFlight,
-    getFlightsAtTime,
-    getActiveWakeZonesAtTime
+    setPlaybackState
   } = store;
 
   const animationFrameRef = useRef<number>();
   const lastTimeRef = useRef<number>(0);
   const [editorUpdateTrigger, setEditorUpdateTrigger] = useState(0);
   const lastEditorTriggerRef = useRef<number>(0);
+  const totalDurationRef = useRef(totalDurationSeconds);
+
+  useEffect(() => {
+    totalDurationRef.current = totalDurationSeconds;
+  }, [totalDurationSeconds]);
 
   useEffect(() => {
     loadInitialData();
@@ -64,13 +71,10 @@ function App() {
       const delta = (timestamp - lastTimeRef.current) / 1000;
       lastTimeRef.current = timestamp;
 
-      const startMs = new Date(playbackState.startTime).getTime();
-      const endMs = new Date(playbackState.endTime).getTime();
-      const totalDuration = (endMs - startMs) / 1000;
-
-      store.setPlaybackState(prev => {
+      setPlaybackState(prev => {
+        const totalDuration = totalDurationRef.current;
         const newTime = prev.currentTime + delta * prev.speed * 60;
-        if (newTime >= totalDuration) {
+        if (totalDuration > 0 && newTime >= totalDuration) {
           return { ...prev, currentTime: totalDuration, isPlaying: false };
         }
         return { ...prev, currentTime: newTime };
@@ -92,15 +96,7 @@ function App() {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [playbackState.isPlaying, playbackState.startTime, playbackState.endTime, store]);
-
-  const activeFlights = useMemo(() => {
-    return getFlightsAtTime(playbackState.currentTime);
-  }, [playbackState.currentTime, getFlightsAtTime]);
-
-  const activeWakeZones = useMemo(() => {
-    return getActiveWakeZonesAtTime(playbackState.currentTime);
-  }, [playbackState.currentTime, getActiveWakeZonesAtTime]);
+  }, [playbackState.isPlaying, setPlaybackState]);
 
   const handleViewStateChange = (params: { viewState: MapViewState }) => {
     setViewState(params.viewState as any);
@@ -140,15 +136,7 @@ function App() {
         onDblClick={handleDoubleClick}
         style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
         layers={MapLayers({
-          airportConfig,
-          activeFlights,
-          activeWakeZones,
-          currentTime: playbackState.currentTime,
-          startTime: playbackState.startTime,
-          showWakeZones: store.showWakeZones,
-          showTrajectories: store.showTrajectories,
-          selectedFlight: store.selectedFlight,
-          editorMode,
+          store,
           editorUpdateTrigger,
           onMapClick: (coord) => {
             if (editorMode === 'runway') {
